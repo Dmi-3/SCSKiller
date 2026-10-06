@@ -9,6 +9,9 @@ All notable changes to the SCSKiller app and command line. The format follows
 
 - Frame-log test recordings use the recorder's invariant numeric format, and the per-stage planner test accepts
   the current culture's percent formatting. The checks now work with comma-decimal regional settings.
+- Recheck layer-made recording keys and recorder paths when a file is rewritten with its size and write time
+  preserved, using the same file stamps as the individual key cache. A damaged recording no longer stays hidden
+  behind the aggregate cache.
 
 ## [1.2.3] - 2026-10-06
 

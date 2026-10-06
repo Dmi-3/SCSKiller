@@ -392,9 +392,11 @@ public class RecordingsTests(ITestOutputHelper output) : IDisposable
         var db = Path.Combine(store.GameDir("test:a"), "recording.db");
         PsoDb.WriteCompact(db, session);
         Assert.Contains(driver.Key, Recordings.LayerMadeOnDisk(data));
+        var written = File.GetLastWriteTimeUtc(db);
         var bytes = File.ReadAllBytes(db);
         bytes[7] ^= 0x20;   // "\0SCSKREc"
         File.WriteAllBytes(db, bytes);
+        File.SetLastWriteTimeUtc(db, written);
         Assert.Throws<Recordings.IncompleteLayerList>(() => Recordings.LayerMadeOnDisk(data));
         File.Delete(db);
 
@@ -416,6 +418,29 @@ public class RecordingsTests(ITestOutputHelper output) : IDisposable
         packs.Exclude([driver.Key]);
         File.AppendAllText(Path.Combine(packs.Dir, "layer-made.keys"), "not a key\r\n");
         Assert.Throws<InvalidDataException>(() => packs.LayerMade());
+    }
+
+    [Fact]
+    public void Recorder_path_changes_with_preserved_size_and_write_time_are_read_again()
+    {
+        var data = Path.Combine(_dir, "data");
+        var store = new AppStore(data);
+        var first = Directory.CreateDirectory(Path.Combine(_dir, "first")).FullName;
+        var other = Directory.CreateDirectory(Path.Combine(_dir, "other")).FullName;
+        var (_, driver, own, _) = Layered();
+        File.Move(Raw("first.db", W(own, null)), Path.Combine(first, "scskiller.db"));
+        File.Move(Raw("other.db", W(driver, null)), Path.Combine(other, "scskiller.db"));
+        var gameDir = Directory.CreateDirectory(store.GameDir("test:a")).FullName;
+        var state = Path.Combine(gameDir, "state.json");
+        var before = System.Text.Json.JsonSerializer.Serialize(new { RecorderExe = Path.Combine(first, "game.exe") });
+        var after = System.Text.Json.JsonSerializer.Serialize(new { RecorderExe = Path.Combine(other, "game.exe") });
+        Assert.Equal(before.Length, after.Length);
+        File.WriteAllText(state, before);
+        Assert.Equal([own.Key], Recordings.LayerMadeOnDisk(data));
+        var written = File.GetLastWriteTimeUtc(state);
+        File.WriteAllText(state, after);
+        File.SetLastWriteTimeUtc(state, written);
+        Assert.Equal([driver.Key], Recordings.LayerMadeOnDisk(data));
     }
 
     /// <summary>'W' records are merged by key like 'N', aren't counted as added pipelines, are counted by

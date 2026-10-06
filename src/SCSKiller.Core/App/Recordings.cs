@@ -173,11 +173,11 @@ public static class Recordings
 
     static readonly object DiskGate = new();
     static (string Fingerprint, HashSet<string> Keys)? onDisk;
-    static readonly Dictionary<string, (long Length, long Written, string[] Inboxes)> InboxesOf = [];
+    static readonly Dictionary<string, (string? Stamp, string[] Inboxes)> InboxesOf = [];
 
     /// <summary>What a layer made by every recording on this PC, read from disk (not from the scan's games, which a
     /// first scan publishes only once evaluated): every games\*\recording.db, and the recorder's inbox (scskiller.db)
-    /// next to each recorded exe in state.json. One enumeration and a stat per file on each call; the set is rebuilt
+    /// next to each recorded exe in state.json. Files are stamped by metadata and sampled contents; the set is rebuilt
     /// only when one of them changed. Anything there that can't be listed, stat'ed or read throws (a recording not whole
     /// yet: <see cref="IncompleteLayerList"/>): what is shared is checked against it.</summary>
     public static HashSet<string> LayerMadeOnDisk(string dataDir)
@@ -188,18 +188,18 @@ public static class Recordings
         catch (DirectoryNotFoundException) { return []; }   // only a missing folder is none: Exists is false on an error too
         var sources = new List<string>();
         var fingerprint = new System.Text.StringBuilder();
-        void Add(string path, long length, long written) { sources.Add(path); fingerprint.Append(path).Append('|').Append(length).Append('|').Append(written).Append('\n'); }
+        void Add(string path, long length, long written) { sources.Add(path); fingerprint.Append(path).Append('|').Append(length).Append('|').Append(written).Append('|').Append(KeyFiles.Stamp(path, strict: true)).Append('\n'); }
         foreach (var dir in dirs)
             foreach (var f in dir.EnumerateFiles())
                 if (f.Name.Equals("recording.db", StringComparison.OrdinalIgnoreCase)) Add(f.FullName, f.Length, f.LastWriteTimeUtc.Ticks);
                 else if (f.Name.Equals("state.json", StringComparison.OrdinalIgnoreCase))
                 {
-                    fingerprint.Append(f.FullName).Append('|').Append(f.Length).Append('|').Append(f.LastWriteTimeUtc.Ticks).Append('\n');
+                    fingerprint.Append(f.FullName).Append('|').Append(KeyFiles.Stamp(f.FullName, strict: true)).Append('\n');
                     foreach (var inbox in Inboxes(f))
                         if (Stat(inbox) is { } st) Add(inbox, st.Length, st.Written);
                 }
         var fp = fingerprint.ToString();
-        // unchanged sizes and write times: the files hold what was read, so their keys stand even if a read would now fail
+        // The aggregate cache must use the same file stamps as the individual key sets.
         lock (DiskGate)
             if (onDisk is { } c && c.Fingerprint == fp) return [.. c.Keys];
         HashSet<string> keys = [];
@@ -212,8 +212,9 @@ public static class Recordings
     /// again only when the file changed.</summary>
     static string[] Inboxes(FileInfo state)
     {
+        var stamp = KeyFiles.Stamp(state.FullName, strict: true);
         lock (DiskGate)
-            if (InboxesOf.TryGetValue(state.FullName, out var c) && (c.Length, c.Written) == (state.Length, state.LastWriteTimeUtc.Ticks)) return c.Inboxes;
+            if (InboxesOf.TryGetValue(state.FullName, out var c) && c.Stamp == stamp) return c.Inboxes;
         using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(state.FullName));
         string[] inboxes = [.. new[] { "RecorderExe", "RecorderMoveFrom", "RecorderMoveTo" }
             .Select(n => !doc.RootElement.TryGetProperty(n, out var exe) ? null : exe.ValueKind switch
@@ -223,7 +224,7 @@ public static class Recordings
                 _ => throw new InvalidDataException($"{state.FullName}: {n} is a {exe.ValueKind}, not a path"),
             })
             .OfType<string>().Where(p => p.Length > 0).Select(p => Path.Combine(Path.GetDirectoryName(p)!, "scskiller.db"))];
-        lock (DiskGate) InboxesOf[state.FullName] = (state.Length, state.LastWriteTimeUtc.Ticks, inboxes);
+        lock (DiskGate) InboxesOf[state.FullName] = (stamp, inboxes);
         return inboxes;
     }
 
