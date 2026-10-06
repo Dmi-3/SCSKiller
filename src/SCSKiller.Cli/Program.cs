@@ -41,6 +41,8 @@ const string Usage = """
       fetch-codecs                                packaging: download the Oodle/zlib DLLs next to this exe if missing
       shadps4-warm --emulator <shadPS4.exe> --game <eboot.bin> --user-data <dir> --serial <CUSA id>
                                                   experimental: warm a recorded Vulkan cache with a warmup-enabled shadPS4 build
+      shadps4-index --game-dir <dir> --out <json>
+                                                  experimental: index PS4 shader code inside PSARC archives (does not compile)
     <game> is an id (steam:2909400) or a case-insensitive part of the name.
     """;
 
@@ -69,6 +71,7 @@ try
         "nvidia-auto-shader" => NvidiaAutoShader(),
         "fetch-codecs" => FetchCodecs(),
         "shadps4-warm" => await ShadPs4Warm(),
+        "shadps4-index" => ShadPs4Index(),
         _ => Fail($"unknown command '{args[0]}'\n{Usage}"),
     };
 }
@@ -82,6 +85,16 @@ try { resultFile = Opt(Elevated.ResultArg); }
 catch (ArgumentException e) { code = Fail(e.Message); }
 if (resultFile != null) Elevated.WriteResult(resultFile, code == 0, Outcome.Message ?? "");
 return code;
+
+int ShadPs4Index()
+{
+    var root = Opt("--game-dir") ?? throw new ArgumentException("--game-dir is required");
+    var output = Opt("--out") ?? throw new ArgumentException("--out is required");
+    var index = ShadPs4ShaderIndex.Read(Path.GetFullPath(root));
+    File.WriteAllText(output, JsonSerializer.Serialize(index, new JsonSerializerOptions { WriteIndented = true }));
+    Console.WriteLine($"shadPS4: indexed {index.Count} shader assets; {index.Count(s => s.Hash != null)} validated GCN programs. No shaders compiled.");
+    return 0;
+}
 
 async Task<int> ShadPs4Warm()
 {

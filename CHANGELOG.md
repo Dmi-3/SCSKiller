@@ -7,6 +7,9 @@ All notable changes to the SCSKiller app and command line. The format follows
 
 ### Added
 
+- Experimental `shadps4-index`: read zlib PSARC archives and validate GCN program headers without running the game.
+  Reports assets and shader hashes separately from recorded Vulkan pipelines; indexing does not compile shaders.
+
 - Experimental `shadps4-warm` CLI command: replay an existing recorded Vulkan cache through a matching shadPS4 build
   with `--warmup-cache`. It checks for that mode before launching, uses temporary copies of configuration and cache,
   and reports success only when every recorded pipeline was loaded. It does not discover shaders from unvisited scenes.

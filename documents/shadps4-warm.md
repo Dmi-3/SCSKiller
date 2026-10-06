@@ -37,3 +37,19 @@ by `git apply`, then build using shadPS4's Windows build instructions. Keep the 
 Local integration validation on CUSA03281 replayed 380/380 recorded pipelines and exited successfully through
 SCSKiller. Original configuration and save-file hashes were unchanged. This validates replay and isolation;
 it does not measure the reduction in gameplay stutter or prove the game's crashes are fixed.
+## Static shader discovery (first stage)
+
+`scskiller shadps4-index --game-dir <dump-directory> --out <index.json>` reads zlib PSARC archives,
+checks bounds, decompresses shader entries in memory and validates `OrbShdr` headers against the GCN
+program's leading token and header offset. It emits names, stages, hashes and offsets, without extracting
+shader binaries or changing the game. Unsupported archive formats fail explicitly.
+
+On CUSA03281 this found 561 validated programs in `bin.psarc`: 276 compute, 237 pixel, 45 vertex and 3 geometry.
+79 of their hashes appeared in the local recorded SPIR-V cache. These are shader counts, not pipeline counts.
+One shader can need multiple permutations and many render-state combinations.
+
+This command is an indexer, not an offline compiler. shadPS4's `Shader::Info::ReadUdReg` reads resource descriptors
+through pointers in live guest user data; `PipelineCache::BuildRuntimeInfo` also takes workgroup, framebuffer and
+other specialization state from GPU registers. The discovered code does not by itself establish those values
+for an unseen draw. A further experimental planner needs resource/render-state templates and cache-hit validation;
+synthetic shaders must not be written into the user's normal recorded cache as if they were exact game outputs.
