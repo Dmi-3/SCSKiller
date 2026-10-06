@@ -127,8 +127,8 @@ public static class KeyFiles
         }
     }
 
-    /// <summary>The file's NTFS change time, volume serial and file id, read without its data: any write or replacement
-    /// moves the change time, which tools that set file times (an archive's extraction) can't set back. "" when the file
+    /// <summary>The file's NTFS change time, volume serial, file id and journal sequence, read without its data.
+    /// The journal detects rapid writes whose change times coalesce. "" when the file
     /// can't be opened; a part the file system doesn't give is left empty.</summary>
     public static string Identity(string path)
     {
@@ -140,7 +140,11 @@ public static class KeyFiles
     {
         var changed = GetFileInformationByHandleEx(h, 0 /* FileBasicInfo */, out BasicInfo b, Marshal.SizeOf<BasicInfo>()) ? b.Changed.ToString() : "";
         var id = GetFileInformationByHandleEx(h, 18 /* FileIdInfo */, out IdInfo i, Marshal.SizeOf<IdInfo>()) ? $"{i.Volume:x}-{i.High:x16}{i.Low:x16}" : "";
-        return $"{changed}/{id}";
+        var record = new byte[4096];
+        var usn = DeviceIoControl(h, 0x900eb /* FSCTL_READ_FILE_USN_DATA */, 0, 0, record, record.Length, out var returned, 0)
+            && returned >= 48 && BitConverter.ToUInt16(record, 4) is var version and (2 or 3)
+            ? BitConverter.ToInt64(record, version == 2 ? 24 : 40).ToString() : "";
+        return $"{changed}/{id}/{usn}";
     }
 
     [StructLayout(LayoutKind.Sequential)] struct BasicInfo { public long Created, Accessed, Written, Changed; public uint Attributes; }
@@ -152,6 +156,9 @@ public static class KeyFiles
     static extern bool GetFileInformationByHandleEx(Microsoft.Win32.SafeHandles.SafeFileHandle h, int infoClass, out BasicInfo info, int size);
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool GetFileInformationByHandleEx(Microsoft.Win32.SafeHandles.SafeFileHandle h, int infoClass, out IdInfo info, int size);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool DeviceIoControl(Microsoft.Win32.SafeHandles.SafeFileHandle h, uint code, nint input, int inputSize,
+        [Out] byte[] output, int outputSize, out int returned, nint overlapped);
 
     static readonly HashSet<string> Damaged = [];
 

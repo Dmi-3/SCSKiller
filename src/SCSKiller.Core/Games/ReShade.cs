@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -122,7 +123,8 @@ public static class ReShade
     sealed record KeptProbe(long Length, DateTime Written, string Identity, bool? Flag, int? Number, string? Text);
 
     /// <summary>Adds the probes <see cref="SaveProbes"/> wrote to <paramref name="file"/>: a start then reads no DLL's version
-    /// resource or bytes again while the file stays the same. One that can't be read adds none.</summary>
+    /// resource or scan its markers again while its content stays the same. Without a change journal, content is hashed.
+    /// One that can't be read adds none.</summary>
     public static void LoadProbes(string file)
     {
         try
@@ -446,7 +448,7 @@ public static class ReShade
     }) as int? ?? NotRead;
 
     /// <summary><paramref name="read"/>'s result (<paramref name="what"/>) for the file while its size, write time, change time and
-    /// file id stay the same; null = it
+    /// file id and content hash stay the same; null = it
     /// couldn't be read or is over <see cref="MaxBytes"/>.</summary>
     static object? Cached(FileInfo f, string what, Func<object> read)
     {
@@ -454,6 +456,16 @@ public static class ReShade
         if (!f.Exists || f.Length > MaxBytes) return null;
         var key = f.FullName + "|" + what;
         var identity = KeyFiles.Identity(f.FullName);
+        try
+        {
+            if (identity.EndsWith('/'))
+            {
+                // Without a journal, timestamps can miss content replaced with a restored write time.
+                using var input = new FileStream(f.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                identity += ":sha256:" + Convert.ToHexStringLower(SHA256.HashData(input));
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
         if (Probed.TryGetValue(key, out var c) && (c.Length, c.Written, c.Identity) == (f.Length, f.LastWriteTimeUtc, identity)) return c.Value;
         try
         {

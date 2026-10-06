@@ -7,6 +7,9 @@ All notable changes to the SCSKiller app and command line. The format follows
 
 ### Fixed
 
+- File identities include the NTFS journal sequence; ReShade validates content when no journal is available.
+  Rapidly replacing a DLL while preserving its size and write time no longer leaves a stale verdict.
+
 - Frame-log test recordings use the recorder's invariant numeric format, and the per-stage planner test accepts
   the current culture's percent formatting. The checks now work with comma-decimal regional settings.
 - Recheck layer-made recording keys and recorder paths when a file is rewritten with its size and write time
