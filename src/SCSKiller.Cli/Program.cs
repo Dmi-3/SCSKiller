@@ -43,6 +43,8 @@ const string Usage = """
                                                   experimental: warm a recorded Vulkan cache with a warmup-enabled shadPS4 build
       shadps4-index --game-dir <dir> --out <json>
                                                   experimental: index PS4 shader code inside PSARC archives (does not compile)
+      shadps4-template --emulator <shadPS4.exe> --game <eboot.bin> --user-data <dir> --serial <CUSA id> --out <json>
+                                                  experimental compute templates; --limit N, --include-recorded for comparison
     <game> is an id (steam:2909400) or a case-insensitive part of the name.
     """;
 
@@ -72,6 +74,7 @@ try
         "fetch-codecs" => FetchCodecs(),
         "shadps4-warm" => await ShadPs4Warm(),
         "shadps4-index" => ShadPs4Index(),
+        "shadps4-template" => await ShadPs4Template(),
         _ => Fail($"unknown command '{args[0]}'\n{Usage}"),
     };
 }
@@ -85,6 +88,21 @@ try { resultFile = Opt(Elevated.ResultArg); }
 catch (ArgumentException e) { code = Fail(e.Message); }
 if (resultFile != null) Elevated.WriteResult(resultFile, code == 0, Outcome.Message ?? "");
 return code;
+
+async Task<int> ShadPs4Template()
+{
+    using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(20));
+    var report = await ShadPs4TemplateWarmer.WarmAsync(
+        Opt("--emulator") ?? throw new ArgumentException("--emulator required"),
+        Opt("--game") ?? throw new ArgumentException("--game required"),
+        Opt("--user-data") ?? throw new ArgumentException("--user-data required"),
+        Opt("--serial") ?? throw new ArgumentException("--serial required"),
+        Opt("--out") ?? throw new ArgumentException("--out required"),
+        Opt("--limit") is { } count ? int.Parse(count) : int.MaxValue, args.Contains("--include-recorded"), new StderrLog(), timeout.Token);
+    Console.WriteLine($"Compute templates: {report.Attempts.Count(a => a.Compiled)}/{report.Attempts.Count} created; " +
+                      $"{report.Attempts.Count(a => a.MatchesRecorded == true)} exact SPIR-V matches. Assumed resources; gameplay reuse is not guaranteed.");
+    return report.Attempts.Count > 0 && report.Attempts.All(a => a.Compiled) ? 0 : 1;
+}
 
 int ShadPs4Index()
 {

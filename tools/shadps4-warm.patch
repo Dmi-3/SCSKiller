@@ -1,5 +1,5 @@
 diff --git a/src/emulator.cpp b/src/emulator.cpp
-index c4f4168..5465df8 100644
+index c4f4168..b21c9ee 100644
 --- a/src/emulator.cpp
 +++ b/src/emulator.cpp
 @@ -44,8 +44,14 @@
@@ -28,7 +28,19 @@ index c4f4168..5465df8 100644
      if (controllers) {
          controllers->ResetLightbarColors();
          // need to give SDL time to do this before the runtime exits
-@@ -570,8 +578,10 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
+@@ -281,6 +289,11 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
+                    std::vector<std::pair<std::filesystem::path, std::string>> mounts,
+                    std::vector<std::string> const& env_vars, bool append_log) {
+     Common::SetCurrentThreadName("shadPS4:Main");
++#ifdef _WIN32
++    if (warmupCacheOnly) {
++        SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
++    }
++#endif
+     if (waitForDebuggerBeforeRun) {
+         Debugger::WaitForDebuggerAttach();
+     }
+@@ -570,8 +583,10 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
      }
 
      // Extract and load trophies.
@@ -41,15 +53,50 @@ index c4f4168..5465df8 100644
 
      std::string game_title = fmt::format("{} - {} <{}>", id, title, app_version);
      std::string window_title = "";
-@@ -599,6 +609,21 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
+@@ -595,10 +610,55 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
+     }
+     window = std::make_unique<Frontend::WindowSDL>(EmulatorSettings.GetWindowWidth(),
+                                                    EmulatorSettings.GetWindowHeight(), controllers,
+-                                                   window_title);
++                                                   window_title, warmupCacheOnly);
 
      g_window = window.get();
 
 +    if (warmupCacheOnly) {
-+        EmulatorSettings.SetPipelineCacheEnabled(true, true);
++        EmulatorSettings.SetPipelineCacheEnabled(warmTemplateFile.empty(), true);
 +        liverpool = std::make_unique<AmdGpu::Liverpool>();
 +        presenter = std::make_unique<Vulkan::Presenter>(*g_window, liverpool.get());
-+        const auto& cache = presenter->GetRasterizer().GetPipelineCache();
++        auto& cache = presenter->GetRasterizer().GetPipelineCache();
++        if (!warmTemplateFile.empty()) {
++            try {
++                if (!cache.IsNvidiaDriver()) {
++                    throw std::runtime_error("Template warmup currently requires NVIDIA");
++                }
++                std::ifstream input(warmTemplateFile, std::ios::binary | std::ios::ate);
++                const auto bytes = input.tellg();
++                if (bytes < 32 || bytes > (64 << 20) || bytes % 4) {
++                    throw std::runtime_error("Invalid compute shader container size");
++                }
++                std::vector<u32> binary(static_cast<size_t>(bytes) / 4);
++                input.seekg(0);
++                input.read(reinterpret_cast<char*>(binary.data()), bytes);
++                if (input.gcount() != bytes) {
++                    throw std::runtime_error("Could not read compute shader container");
++                }
++                const auto [hash, recorded_match] = cache.WarmComputeTemplate(
++                    binary, Common::FS::GetUserPath(Common::FS::PathType::CacheDir) / id);
++                std::cout << fmt::format("SCSKILLER_TEMPLATE "
++                                         "{{\"compiled\":1,\"hash\":\"{:016x}\",\"assumed\":true,"
++                                         "\"recorded_match\":{}}}",
++                                         hash, recorded_match)
++                          << std::endl;
++                warmupExitCode = 0;
++            } catch (const std::exception& error) {
++                std::cerr << "Template warmup failed: " << error.what() << std::endl;
++            }
++            Common::Log::Flush();
++            return;
++        }
 +        const auto loaded = cache.GetPreloadedCount();
 +        const auto total = cache.GetPreloadTotal();
 +        Storage::DataBase::Instance().Close();
@@ -64,41 +111,49 @@ index c4f4168..5465df8 100644
          window->SetIcon(*icon);
      } else {
 diff --git a/src/emulator.h b/src/emulator.h
-index 251fc13..7aca708 100644
+index 251fc13..4aa6c57 100644
 --- a/src/emulator.h
 +++ b/src/emulator.h
-@@ -47,6 +47,8 @@ public:
+@@ -47,6 +47,9 @@ public:
 
      const char* executableName;
      bool waitForDebuggerBeforeRun{false};
 +    bool warmupCacheOnly{false};
++    std::filesystem::path warmTemplateFile;
 +    int warmupExitCode{1};
 
  private:
      void LoadSystemModules(const std::string& game_serial);
 diff --git a/src/main.cpp b/src/main.cpp
-index 552cb73..305666b 100644
+index 552cb73..3c6b9cf 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
-@@ -68,6 +68,7 @@ int main(int argc, char* argv[]) {
+@@ -68,6 +68,8 @@ int main(int argc, char* argv[]) {
      bool bigPicture = false;
      bool sameProcess = false;
      bool append_log{};
 +    bool warmup_cache{};
++    std::optional<std::filesystem::path> warm_template;
 
      std::optional<std::filesystem::path> addGameFolder;
      std::optional<std::filesystem::path> setAddonFolder;
-@@ -102,6 +103,8 @@ int main(int argc, char* argv[]) {
+@@ -102,6 +104,11 @@ int main(int argc, char* argv[]) {
      app.add_flag("--config-clean", configClean);
      app.add_flag("--config-global", configGlobal);
      app.add_flag("--log-append", append_log);
 +    app.add_flag("--warmup-cache", warmup_cache,
 +                 "Preload the recorded pipeline cache without executing the game");
++    app.add_option("--warmup-template", warm_template,
++                   "Experimental compute shader warmup with placeholder resource descriptors")
++        ->check(CLI::ExistingFile);
 
      app.add_option("--add-game-folder", addGameFolder)->check(CLI::ExistingDirectory);
      app.add_option("--set-addon-folder", setAddonFolder)->check(CLI::ExistingDirectory);
-@@ -160,7 +163,9 @@ int main(int argc, char* argv[]) {
+@@ -158,9 +165,12 @@ int main(int argc, char* argv[]) {
+     // Initialize key manager
+     KeyManager::GetInstance()->LoadFromFile();
 
++    warmup_cache = warmup_cache || warm_template.has_value();
      // Load configurations
      EmulatorSettings.Load();
 -    UserSettings.Load();
@@ -108,11 +163,14 @@ index 552cb73..305666b 100644
 
      if (bigPicture) {
          BigPictureMode::Launch(argv[0], sameProcess);
-@@ -254,7 +259,11 @@ int main(int argc, char* argv[]) {
+@@ -254,7 +264,14 @@ int main(int argc, char* argv[]) {
      auto* emulator = Common::Singleton<Core::Emulator>::Instance();
      emulator->executableName = argv[0];
      emulator->waitForDebuggerBeforeRun = waitForDebugger;
 +    emulator->warmupCacheOnly = warmup_cache;
++    if (warm_template) {
++        emulator->warmTemplateFile = *warm_template;
++    }
      emulator->Run(ebootPath, gameArgs, overrideRoot, mounts, env_vars, append_log);
 
 +    if (warmup_cache) {
@@ -120,11 +178,174 @@ index 552cb73..305666b 100644
 +    }
      return 0;
  }
+diff --git a/src/sdl_window.cpp b/src/sdl_window.cpp
+index a7d3650..ad2273e 100644
+--- a/src/sdl_window.cpp
++++ b/src/sdl_window.cpp
+@@ -96,7 +96,7 @@ static Uint32 SDLCALL PollControllerLightColour(void* userdata, SDL_TimerID time
+ }
+
+ WindowSDL::WindowSDL(s32 width_, s32 height_, Input::GameControllers* controllers_,
+-                     std::string_view window_title)
++                     std::string_view window_title, bool hidden)
+     : width{width_}, height{height_}, controllers{*controllers_} {
+     if (!SDL_SetHint(SDL_HINT_APP_NAME, "shadPS4")) {
+         UNREACHABLE_MSG("Failed to set SDL window hint: {}", SDL_GetError());
+@@ -114,6 +114,7 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, Input::GameControllers* controller
+     SDL_InitSubSystem(SDL_INIT_AUDIO);
+
+     SDL_PropertiesID props = SDL_CreateProperties();
++    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_HIDDEN_BOOLEAN, hidden);
+     SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING,
+                           std::string(window_title).c_str());
+     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED);
+diff --git a/src/sdl_window.h b/src/sdl_window.h
+index 5f82bf6..5e17510 100644
+--- a/src/sdl_window.h
++++ b/src/sdl_window.h
+@@ -49,7 +49,7 @@ class WindowSDL {
+
+ public:
+     explicit WindowSDL(s32 width, s32 height, Input::GameControllers* controllers,
+-                       std::string_view window_title);
++                       std::string_view window_title, bool hidden = false);
+     ~WindowSDL();
+
+     s32 GetWidth() const {
+diff --git a/src/shader_recompiler/info.h b/src/shader_recompiler/info.h
+index 75dcac5..d7ac10a 100644
+--- a/src/shader_recompiler/info.h
++++ b/src/shader_recompiler/info.h
+@@ -112,6 +112,7 @@ struct Info : InfoPersistent {
+     u32 uses_patches{};
+
+     VAddr pgm_base;
++    bool offline_template{};
+     bool has_storage_images{};
+     bool has_discard{};
+     bool has_image_gather{};
+@@ -149,6 +150,9 @@ struct Info : InfoPersistent {
+
+     template <typename T>
+     T ReadUdReg(u32 ptr_index, u32 dword_offset) const noexcept {
++        if (offline_template) {
++            return T{};
++        }
+         T data;
+         const u32* base = user_data.data();
+         if (ptr_index != IR::NumScalarRegs) {
+@@ -168,7 +172,7 @@ struct Info : InfoPersistent {
+         flattened_ud_buf.resize(srt_info.flattened_bufsize_dw);
+         ASSERT(user_data.size() <= NUM_USER_DATA_REGS);
+         std::memcpy(flattened_ud_buf.data(), user_data.data(), user_data.size_bytes());
+-        if (srt_info.walker_func) {
++        if (srt_info.walker_func && !offline_template) {
+             srt_info.walker_func(user_data.data(), flattened_ud_buf.data());
+         }
+     }
 diff --git a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
-index d171816..46e0132 100644
+index d171816..90d3ebf 100644
 --- a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
 +++ b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
-@@ -334,6 +334,10 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
+@@ -1,6 +1,7 @@
+ // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
+ // SPDX-License-Identifier: GPL-2.0-or-later
+
++#include <fstream>
+ #include <ranges>
+
+ #include "common/hash.h"
+@@ -22,6 +23,89 @@
+
+ namespace Vulkan {
+
++std::pair<u64, int> PipelineCache::WarmComputeTemplate(
++    std::span<const u32> binary, const std::filesystem::path& reference_directory) {
++    // Experimental standalone path: no guest descriptors, no recorded cache entries.
++    size_t header = 0;
++    while (header < binary.size() && binary[header] != 0x72646853) {
++        ++header;
++    }
++    if (header + 13 >= binary.size() || (binary[header + 2] & 0xff) != 4) {
++        throw std::runtime_error("Not a supported GNM compute shader container");
++    }
++    size_t code_offset = header + 4 + ((binary[header + 2] >> 8) & 0xff);
++    if (code_offset + 2 >= binary.size() || binary[code_offset] != 0xBEEB03FF) {
++        throw std::runtime_error("Invalid compute shader code offset");
++    }
++    const auto info_offset = code_offset + (u64(binary[code_offset + 1]) + 1) * 2;
++    if (info_offset + 8 > binary.size()) {
++        throw std::runtime_error("Compute shader binary info exceeds bounds");
++    }
++    AmdGpu::BinaryInfo binary_info{};
++    std::memcpy(&binary_info, binary.data() + info_offset, sizeof(binary_info));
++    if (!binary_info.Valid() || !binary_info.length || binary_info.length % 4 ||
++        code_offset + binary_info.length / 4 > binary.size()) {
++        throw std::runtime_error("Invalid compute shader binary info");
++    }
++    AmdGpu::UserData user_data{};
++    Shader::ShaderParams params{user_data, binary.subspan(code_offset, binary_info.length / 4),
++                                binary_info.shader_hash};
++    Shader::Info info{Shader::HwStage::Compute, Shader::SwStage::Compute, params};
++    info.offline_template = true;
++    auto& cs = liverpool->GetCsRegs();
++    std::memcpy(&cs.settings, binary.data() + header + 8, sizeof(cs.settings));
++    cs.num_thread_x.full = binary[header + 10] & 0xffff;
++    cs.num_thread_y.full = binary[header + 11] & 0xffff;
++    cs.num_thread_z.full = binary[header + 12] & 0xffff;
++    if (!cs.num_thread_x.full || !cs.num_thread_y.full || !cs.num_thread_z.full) {
++        throw std::runtime_error("Invalid compute workgroup dimensions");
++    }
++    Shader::RuntimeInfo runtime =
++        BuildRuntimeInfo(Shader::HwStage::Compute, Shader::SwStage::Compute);
++    Shader::Backend::Bindings bindings{};
++    auto program = Shader::TranslateProgram(params.code, pools, info, runtime, profile);
++    auto spv = Shader::Backend::SPIRV::EmitSPIRV(profile, runtime, program, bindings);
++    if (info.translation_failed || spv.empty()) {
++        throw std::runtime_error("Compute template translation failed");
++    }
++    int recorded_match = -1;
++    if (std::filesystem::is_directory(reference_directory)) {
++        const auto prefix = fmt::format("{:#018x}_", params.hash);
++        for (const auto& file : std::filesystem::directory_iterator(reference_directory)) {
++            if (file.path().extension() != ".spv" ||
++                !file.path().filename().string().starts_with(prefix)) {
++                continue;
++            }
++            if (recorded_match < 0) {
++                recorded_match = 0;
++            }
++            if (file.file_size() != spv.size() * sizeof(u32)) {
++                continue;
++            }
++            std::vector<u32> recorded(spv.size());
++            std::ifstream input(file.path(), std::ios::binary);
++            input.read(reinterpret_cast<char*>(recorded.data()), spv.size() * sizeof(u32));
++            if (input && recorded == spv) {
++                recorded_match = 1;
++                break;
++            }
++        }
++    }
++    auto module = CompileSPV(spv, instance.GetDevice());
++    try {
++        ComputePipelineKey key{};
++        key.value = HashCombine(params.hash, 0);
++        ComputePipeline::SerializationSupport data{};
++        ComputePipeline pipeline{instance, scheduler, desc_heap, profile, *pipeline_cache,
++                                 key,      info,      module,    data,    true};
++    } catch (...) {
++        instance.GetDevice().destroyShaderModule(module);
++        throw;
++    }
++    instance.GetDevice().destroyShaderModule(module);
++    return {params.hash, recorded_match};
++}
++
+ using Shader::HwStage;
+ using Shader::Output;
+ using Shader::SwStage;
+@@ -334,6 +418,10 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
 
  PipelineCache::~PipelineCache() = default;
 
@@ -136,13 +357,23 @@ index d171816..46e0132 100644
      draw_indirect_params = params;
      if (!RefreshGraphicsKey()) {
 diff --git a/src/video_core/renderer_vulkan/vk_pipeline_cache.h b/src/video_core/renderer_vulkan/vk_pipeline_cache.h
-index edd9737..78d3c80 100644
+index edd9737..98f4bce 100644
 --- a/src/video_core/renderer_vulkan/vk_pipeline_cache.h
 +++ b/src/video_core/renderer_vulkan/vk_pipeline_cache.h
-@@ -76,6 +76,13 @@ public:
+@@ -3,6 +3,7 @@
+
+ #pragma once
+
++#include <filesystem>
+ #include <variant>
+ #include <tsl/robin_map.h>
+ #include "shader_recompiler/profile.h"
+@@ -76,6 +77,15 @@ public:
      ~PipelineCache();
 
      void WarmUp();
++    std::pair<u64, int> WarmComputeTemplate(std::span<const u32> binary,
++                                            const std::filesystem::path& reference_directory);
 +    u32 GetPreloadedCount() const {
 +        return preloaded_count;
 +    }
@@ -153,7 +384,7 @@ index edd9737..78d3c80 100644
      void Sync();
 
      bool LoadComputePipeline(Serialization::Archive& ar);
-@@ -126,6 +133,8 @@ private:
+@@ -126,6 +136,8 @@ private:
      vk::UniquePipelineCache pipeline_cache;
      vk::UniquePipelineLayout pipeline_layout;
      Shader::Profile profile{};

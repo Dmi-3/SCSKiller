@@ -7,6 +7,10 @@ All notable changes to the SCSKiller app and command line. The format follows
 
 ### Added
 
+- Experimental `shadps4-template`: compile PSARC compute shaders using placeholder resources in an isolated profile.
+  Reports exact SPIR-V comparisons with recorded game variants; successful creation is not a gameplay cache-hit claim.
+  Each shader has a separate process and timeout. Graphics templates are not supported.
+
 - Experimental `shadps4-index`: read zlib PSARC archives and validate GCN program headers without running the game.
   Reports assets and shader hashes separately from recorded Vulkan pipelines; indexing does not compile shaders.
 

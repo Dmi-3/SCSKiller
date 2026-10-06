@@ -5,6 +5,7 @@
 
 This is an unofficial experimental fork of [SCSKiller](https://github.com/BlueHeisenberg/SCSKiller).
 Its added shadPS4 cache warmup command is documented in [shadps4-warm.md](documents/shadps4-warm.md).
+The separate [compute-template experiment](documents/shadps4-templates.md) attempts static shader compilation with assumed resources and reports comparisons with real game variants.
 The original project's documentation and measurements follow below; those measurements do not describe the shadPS4 extension.
 <p align="center">
   <strong>Shader Compilation Stutter Killer.</strong> SCSKiller compiles your games' shaders into your GPU driver's

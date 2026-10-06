@@ -11,7 +11,7 @@ public static class ShadPs4ShaderIndex
 {
     const int MaxEntry = 64 << 20;
 
-    public static IReadOnlyList<Ps4ShaderEntry> Read(string gameDirectory)
+    public static IReadOnlyList<Ps4ShaderEntry> Read(string gameDirectory, Action<Ps4ShaderEntry, byte[]>? visitor = null)
     {
         var result = new List<Ps4ShaderEntry>();
         foreach (var path in Directory.EnumerateFiles(gameDirectory, "*.psarc", SearchOption.AllDirectories))
@@ -86,7 +86,9 @@ public static class ShadPs4ShaderIndex
                             break;
                         }
                 }
-                result.Add(new(Path.GetRelativePath(gameDirectory, path), name, extension[1..], hash, bytes.Length, codeOffset));
+                var entry = new Ps4ShaderEntry(Path.GetRelativePath(gameDirectory, path), name, extension[1..], hash, bytes.Length, codeOffset);
+                result.Add(entry);
+                visitor?.Invoke(entry, bytes);
             }
         }
         return result;

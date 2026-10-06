@@ -65,7 +65,7 @@ public static class ShadPs4Warmer
         }
     }
 
-    static async Task<(int ExitCode, string Output)> Run(string executable, string directory, string[] args, CancellationToken ct)
+    internal static async Task<(int ExitCode, string Output, string Error)> Run(string executable, string directory, string[] args, CancellationToken ct, bool allowFailure = false)
     {
         var info = new ProcessStartInfo(executable) { WorkingDirectory = directory, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
         foreach (var arg in args) info.ArgumentList.Add(arg);
@@ -77,9 +77,9 @@ public static class ShadPs4Warmer
             await process.WaitForExitAsync(ct);
             var output = await stdout;
             var errors = await stderr;
-            if (process.ExitCode != 0 && !output.Contains("SCSKILLER_WARM ", StringComparison.Ordinal))
+            if (!allowFailure && process.ExitCode != 0 && !output.Contains("SCSKILLER_WARM ", StringComparison.Ordinal))
                 throw new IOException($"shadPS4 failed (exit {process.ExitCode}): {errors}");
-            return (process.ExitCode, output);
+            return (process.ExitCode, output, errors);
         }
         catch
         {
