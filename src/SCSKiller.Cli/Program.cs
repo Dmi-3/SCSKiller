@@ -6,6 +6,7 @@ using SCSKiller.Core;
 using SCSKiller.Core.App;
 using SCSKiller.Core.Unreal;
 using SCSKiller.Core.Vendors;
+using SCSKiller.Core.Warming;
 
 const string Usage = """
     usage: scskiller <command>
@@ -38,6 +39,8 @@ const string Usage = """
                                                   the index's shaders and those this PC's recording saw (default <game id>.reference.json)
       task register|unregister                    the logon/idle "re-warm after a driver update" task
       fetch-codecs                                packaging: download the Oodle/zlib DLLs next to this exe if missing
+      shadps4-warm --emulator <shadPS4.exe> --game <eboot.bin> --user-data <dir> --serial <CUSA id>
+                                                  experimental: warm a recorded Vulkan cache with a warmup-enabled shadPS4 build
     <game> is an id (steam:2909400) or a case-insensitive part of the name.
     """;
 
@@ -65,6 +68,7 @@ try
         "nvidia-snapshot" => NvidiaSnapshot(),
         "nvidia-auto-shader" => NvidiaAutoShader(),
         "fetch-codecs" => FetchCodecs(),
+        "shadps4-warm" => await ShadPs4Warm(),
         _ => Fail($"unknown command '{args[0]}'\n{Usage}"),
     };
 }
@@ -78,6 +82,18 @@ try { resultFile = Opt(Elevated.ResultArg); }
 catch (ArgumentException e) { code = Fail(e.Message); }
 if (resultFile != null) Elevated.WriteResult(resultFile, code == 0, Outcome.Message ?? "");
 return code;
+
+async Task<int> ShadPs4Warm()
+{
+    using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(20));
+    var result = await ShadPs4Warmer.WarmAsync(
+        Opt("--emulator") ?? throw new ArgumentException("--emulator is required"),
+        Opt("--game") ?? throw new ArgumentException("--game is required"),
+        Opt("--user-data") ?? throw new ArgumentException("--user-data is required"),
+        Opt("--serial") ?? throw new ArgumentException("--serial is required"), timeout.Token);
+    Console.WriteLine($"shadPS4: warmed {result.Loaded}/{result.Total} recorded pipelines.");
+    return 0;
+}
 
 static int Fail(string message)
 {

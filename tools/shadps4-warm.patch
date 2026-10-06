@@ -1,0 +1,191 @@
+diff --git a/src/emulator.cpp b/src/emulator.cpp
+index c4f4168..5465df8 100644
+--- a/src/emulator.cpp
++++ b/src/emulator.cpp
+@@ -44,8 +44,14 @@
+ #include "core/memory.h"
+ #include "core/user_settings.h"
+ #include "emulator.h"
++#include "video_core/amdgpu/liverpool.h"
+ #include "video_core/cache_storage.h"
+ #include "video_core/renderdoc.h"
++#include "video_core/renderer_vulkan/vk_presenter.h"
++#include "video_core/renderer_vulkan/vk_rasterizer.h"
++
++extern std::unique_ptr<Vulkan::Presenter> presenter;
++extern std::unique_ptr<AmdGpu::Liverpool> liverpool;
+
+ #ifdef _WIN32
+ #include <WinSock2.h>
+@@ -96,7 +102,9 @@ void Emulator::Shutdown() {
+     if (play_time_thread.joinable()) {
+         play_time_thread.join();
+     }
+-    UpdatePlayTime(Common::Singleton<Common::ElfInfo>::Instance()->GameSerial());
++    if (!warmupCacheOnly) {
++        UpdatePlayTime(Common::Singleton<Common::ElfInfo>::Instance()->GameSerial());
++    }
+     if (controllers) {
+         controllers->ResetLightbarColors();
+         // need to give SDL time to do this before the runtime exits
+@@ -570,8 +578,10 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
+     }
+
+     // Extract and load trophies.
+-    game_info.trophy_index_map =
+-        ExtractTrophies("/app0/sce_sys/npbind.dat", "/app0/sce_sys/trophy");
++    if (!warmupCacheOnly) {
++        game_info.trophy_index_map =
++            ExtractTrophies("/app0/sce_sys/npbind.dat", "/app0/sce_sys/trophy");
++    }
+
+     std::string game_title = fmt::format("{} - {} <{}>", id, title, app_version);
+     std::string window_title = "";
+@@ -599,6 +609,21 @@ void Emulator::Run(std::filesystem::path file, std::vector<std::string> args,
+
+     g_window = window.get();
+
++    if (warmupCacheOnly) {
++        EmulatorSettings.SetPipelineCacheEnabled(true, true);
++        liverpool = std::make_unique<AmdGpu::Liverpool>();
++        presenter = std::make_unique<Vulkan::Presenter>(*g_window, liverpool.get());
++        const auto& cache = presenter->GetRasterizer().GetPipelineCache();
++        const auto loaded = cache.GetPreloadedCount();
++        const auto total = cache.GetPreloadTotal();
++        Storage::DataBase::Instance().Close();
++        std::cout << "SCSKILLER_WARM {\"loaded\":" << loaded << ",\"total\":" << total << "}"
++                  << std::endl;
++        Common::Log::Flush();
++        warmupExitCode = cache.IsNvidiaDriver() && loaded > 0 && loaded == total ? 0 : 1;
++        return;
++    }
++
+     if (auto icon = mnt->ReadFile("/app0/sce_sys/icon0.png")) {
+         window->SetIcon(*icon);
+     } else {
+diff --git a/src/emulator.h b/src/emulator.h
+index 251fc13..7aca708 100644
+--- a/src/emulator.h
++++ b/src/emulator.h
+@@ -47,6 +47,8 @@ public:
+
+     const char* executableName;
+     bool waitForDebuggerBeforeRun{false};
++    bool warmupCacheOnly{false};
++    int warmupExitCode{1};
+
+ private:
+     void LoadSystemModules(const std::string& game_serial);
+diff --git a/src/main.cpp b/src/main.cpp
+index 552cb73..305666b 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -68,6 +68,7 @@ int main(int argc, char* argv[]) {
+     bool bigPicture = false;
+     bool sameProcess = false;
+     bool append_log{};
++    bool warmup_cache{};
+
+     std::optional<std::filesystem::path> addGameFolder;
+     std::optional<std::filesystem::path> setAddonFolder;
+@@ -102,6 +103,8 @@ int main(int argc, char* argv[]) {
+     app.add_flag("--config-clean", configClean);
+     app.add_flag("--config-global", configGlobal);
+     app.add_flag("--log-append", append_log);
++    app.add_flag("--warmup-cache", warmup_cache,
++                 "Preload the recorded pipeline cache without executing the game");
+
+     app.add_option("--add-game-folder", addGameFolder)->check(CLI::ExistingDirectory);
+     app.add_option("--set-addon-folder", setAddonFolder)->check(CLI::ExistingDirectory);
+@@ -160,7 +163,9 @@ int main(int argc, char* argv[]) {
+
+     // Load configurations
+     EmulatorSettings.Load();
+-    UserSettings.Load();
++    if (!warmup_cache) {
++        UserSettings.Load();
++    }
+
+     if (bigPicture) {
+         BigPictureMode::Launch(argv[0], sameProcess);
+@@ -254,7 +259,11 @@ int main(int argc, char* argv[]) {
+     auto* emulator = Common::Singleton<Core::Emulator>::Instance();
+     emulator->executableName = argv[0];
+     emulator->waitForDebuggerBeforeRun = waitForDebugger;
++    emulator->warmupCacheOnly = warmup_cache;
+     emulator->Run(ebootPath, gameArgs, overrideRoot, mounts, env_vars, append_log);
+
++    if (warmup_cache) {
++        std::quick_exit(emulator->warmupExitCode);
++    }
+     return 0;
+ }
+diff --git a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+index d171816..46e0132 100644
+--- a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+@@ -334,6 +334,10 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
+
+ PipelineCache::~PipelineCache() = default;
+
++bool PipelineCache::IsNvidiaDriver() const {
++    return instance.GetDriverID() == vk::DriverId::eNvidiaProprietary;
++}
++
+ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectParams params) {
+     draw_indirect_params = params;
+     if (!RefreshGraphicsKey()) {
+diff --git a/src/video_core/renderer_vulkan/vk_pipeline_cache.h b/src/video_core/renderer_vulkan/vk_pipeline_cache.h
+index edd9737..78d3c80 100644
+--- a/src/video_core/renderer_vulkan/vk_pipeline_cache.h
++++ b/src/video_core/renderer_vulkan/vk_pipeline_cache.h
+@@ -76,6 +76,13 @@ public:
+     ~PipelineCache();
+
+     void WarmUp();
++    u32 GetPreloadedCount() const {
++        return preloaded_count;
++    }
++    u32 GetPreloadTotal() const {
++        return preload_total;
++    }
++    bool IsNvidiaDriver() const;
+     void Sync();
+
+     bool LoadComputePipeline(Serialization::Archive& ar);
+@@ -126,6 +133,8 @@ private:
+     vk::UniquePipelineCache pipeline_cache;
+     vk::UniquePipelineLayout pipeline_layout;
+     Shader::Profile profile{};
++    u32 preloaded_count{};
++    u32 preload_total{};
+     Shader::Pools pools;
+     DrawIndirectParams draw_indirect_params{};
+     tsl::robin_map<size_t, std::unique_ptr<Program>> program_cache;
+diff --git a/src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp b/src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp
+index 8e25ba3..d10eb6c 100644
+--- a/src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp
++++ b/src/video_core/renderer_vulkan/vk_pipeline_serialization.cpp
+@@ -369,6 +369,8 @@ void PipelineCache::WarmUp() {
+         });
+
+     LOG_INFO(Render, "Preloaded {} pipelines", num_pipelines);
++    preloaded_count = num_pipelines;
++    preload_total = num_total_pipelines;
+     if (num_total_pipelines > num_pipelines) {
+         LOG_WARNING(Render, "{} stale pipelines were found. Consider re-generating the cache",
+                     num_total_pipelines - num_pipelines);
+diff --git a/src/video_core/renderer_vulkan/vk_rasterizer.h b/src/video_core/renderer_vulkan/vk_rasterizer.h
+index ace936c..c763696 100644
+--- a/src/video_core/renderer_vulkan/vk_rasterizer.h
++++ b/src/video_core/renderer_vulkan/vk_rasterizer.h
+@@ -29,6 +29,9 @@ public:
+     explicit Rasterizer(const Instance& instance, Scheduler& scheduler, Runtime& runtime,
+                         AmdGpu::Liverpool* liverpool);
+     ~Rasterizer();
++    const PipelineCache& GetPipelineCache() const {
++        return pipeline_cache;
++    }
+
+     [[nodiscard]] Scheduler& GetScheduler() noexcept {
+         return scheduler;
