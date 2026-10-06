@@ -94,7 +94,7 @@ public class PerStagePlanTests(ITestOutputHelper output)
         Assert.Equal(2, plan.Stats.GuessedUnits);
         Assert.Equal(2.0 / 3, plan.Stats.LayoutCoverage, 6);
         Assert.Equal(3 + 2 + 1 + 1, plan.Stats.ExactUnits + plan.Stats.InferredUnits + plan.Stats.GuessedUnits); // VS alone x3, VS2/VS3 before a PS, PS2, CS
-        Assert.Contains(log, l => l.StartsWith("warning: only 67%"));
+        Assert.Contains(log, l => l.StartsWith($"warning: only {2.0 / 3:P0}"));
         Assert.Contains(log, l => l.StartsWith("per-stage (amd): "));
     }
 

@@ -5270,7 +5270,7 @@ public partial class AppTests : IDisposable
         var csv = Path.Combine(_exeDir, "scskiller_creates.csv");
         const long at = 1_700_000_000_000;
         void Launch(double minutes, params string[] creates) => File.AppendAllLines(csv,
-            [$"#session,{at},Fake-Win64-Shipping.exe", "#clock,0.0", .. creates, $"#end,{at + (long)(minutes * 60_000)},{minutes * 60_000:0.0}"]);
+            [$"#session,{at},Fake-Win64-Shipping.exe", "#clock,0.0", .. creates, FormattableString.Invariant($"#end,{at + (long)(minutes * 60_000)},{minutes * 60_000:0.0}")]);
 
         Launch(2, "20.0,G,0,0,1.0");
         await k.ScanAsync(default);
@@ -5418,7 +5418,7 @@ public partial class AppTests : IDisposable
     {
         var csv = Path.Combine(_root, "creates.csv");
         var rows = new List<string> { "#session,2000,Fake.exe" };
-        for (int i = 0; i < 200; i++) rows.Add($"{10 * i:0.0},S,0,0,{(i % 2 == 0 ? "900.0" : "0.5")}");   // 0-2 s: 100 compiles, 100 hits
+        for (int i = 0; i < 200; i++) rows.Add(FormattableString.Invariant($"{10 * i:0.0},S,0,0,{(i % 2 == 0 ? "900.0" : "0.5")}"));   // 0-2 s: 100 compiles, 100 hits
         rows.Add("30000.0,S,0,0,25.0");
         rows.Add("31000.0,S,0,0,40.0");
         rows.Add("#end,62000");
@@ -5436,7 +5436,7 @@ public partial class AppTests : IDisposable
         Assert.Equal(new SessionStats(TimeSpan.FromSeconds(60), 201, 0, 100, 1, 25.0, StartupCompiles: 100), SessionLog.Read(csv).Last);
 
         // ray tracing state objects: the same startup, their own compile threshold
-        rows = ["#session,2000,Fake.exe", .. Enumerable.Range(0, 200).Select(i => $"{10 * i:0.0},R,0,0,100.0"), "30000.0,R,0,0,100.0", "31000.0,A,0,0,20.0", "#end,62000"];
+        rows = ["#session,2000,Fake.exe", .. Enumerable.Range(0, 200).Select(i => FormattableString.Invariant($"{10 * i:0.0},R,0,0,100.0")), "30000.0,R,0,0,100.0", "31000.0,A,0,0,20.0", "#end,62000"];
         File.WriteAllLines(csv, rows);
         Assert.Equal(new SessionStats(TimeSpan.FromSeconds(60), 202, 0, 0, 0, 0, StateObjectsReady: 1, StateObjectsCompiled: 1, StateObjectsStartupCompiled: 200),
             SessionLog.Read(csv).Last);
@@ -5451,7 +5451,7 @@ public partial class AppTests : IDisposable
         await k.ScanAsync(default);
         const long at = 1_700_000_000_000;
         File.WriteAllLines(Path.Combine(_exeDir, "scskiller_creates.csv"), ["#session,1700000000000,Fake-Win64-Shipping.exe",
-            .. Enumerable.Range(0, 60 * 30).Select(i => $"{i * 1000 / 30.0:0.0},S,0,0,25.000"), "60000.0,S,0,0,25.000", "60033.3,S,0,0,25.000"]);
+            .. Enumerable.Range(0, 60 * 30).Select(i => FormattableString.Invariant($"{i * 1000 / 30.0:0.0},S,0,0,25.000")), "60000.0,S,0,0,25.000", "60033.3,S,0,0,25.000"]);
         File.WriteAllBytes(Path.Combine(_exeDir, FrameLog.FileName), FrameLogTests.Launch(at + 50, 0, Enumerable.Range(0, 30_000).Select(i => i * 10.0)));
         k.RefreshGame(_game.Id);
         var s = k.Games.Single();
@@ -5499,8 +5499,8 @@ public partial class AppTests : IDisposable
         string[] startup = ["S,0,0,900.0", "S,1,1,0.5", "s,1,1,0.3", "R,0,0,100.0", $"C,1,1,20.0,{rq}"];
         string[] play = ["S,0,0,25.0", "S,1,1,0.5", "s,1,1,0.3", "R,0,0,100.0", "A,1,1,20.0", $"C,1,1,30.0,{rq}"];
         var csv = Path.Combine(_root, "creates.csv");
-        File.WriteAllLines(csv, ["#session,2000,Fake.exe", .. Enumerable.Range(0, 200).Select(i => $"{10 * i:0.0},{startup[i % 5]}"),
-            .. play.Select((r, i) => $"{30_000 + 1000 * i:0.0},{r}"), "#end,62000"]);
+        File.WriteAllLines(csv, ["#session,2000,Fake.exe", .. Enumerable.Range(0, 200).Select(i => FormattableString.Invariant($"{10 * i:0.0},{startup[i % 5]}")),
+            .. play.Select((r, i) => FormattableString.Invariant($"{30_000 + 1000 * i:0.0},{r}")), "#end,62000"]);
         var l = SessionLog.Read(csv, rayQuery: new HashSet<string> { rq }).Last!;
         Assert.Equal(new SessionStats(TimeSpan.FromSeconds(60), 206, 41, 41, 1, 25.0, RayQueryRecompiles: 41, StateObjectsReady: 1, StateObjectsCompiled: 1,
             StartupCompiles: 40, StateObjectsStartupCompiled: 40), l);

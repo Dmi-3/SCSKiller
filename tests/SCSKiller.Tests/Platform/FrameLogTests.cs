@@ -41,16 +41,16 @@ public class FrameLogTests(ITestOutputHelper output) : IDisposable
     public void Slow_frames_are_shader_compiles_other_hitches_or_loading()
     {
         var csv = new List<string> { "#session,1000000,Game.exe" };
-        for (int i = 0; i < 200; i++) csv.Add($"{10 * i:0.0},S,1,1,50.000,{i:x40},0.010,7,0");   // startup: 0-2 s
-        for (int i = 0; i < 5; i++) csv.Add($"{600 + 20 * i:0.0},S,1,1,200.000,{i + 4000:x40},0.010,7,0");   // cold compiles in its first slow frame
+        for (int i = 0; i < 200; i++) csv.Add(FormattableString.Invariant($"{10 * i:0.0},S,1,1,50.000,{i:x40},0.010,7,0"));   // startup: 0-2 s
+        for (int i = 0; i < 5; i++) csv.Add(FormattableString.Invariant($"{600 + 20 * i:0.0},S,1,1,200.000,{i + 4000:x40},0.010,7,0"));   // cold compiles in its first slow frame
         csv.Add("15040.0,S,1,1,60.000,aa,0.010,8,0");    // compile inside the 15000 ms frame
         csv.Add("18040.0,C,1,1,40.000,bb,0.010,8,0");    // RayQuery floor inside the 18000 ms frame
         csv.Add("27040.0,R,1,1,23.500,cc,0.010,8,0");    // a cached state object inside the 27000 ms frame
         csv.Add("28040.0,A,0,0,57.500,ee,0.010,8,0");    // a single-material addition compiled inside the 28000 ms frame (The Witcher 3)
         csv.Add("23040.0,A,1,1,70.000,dd,0.010,8,0");    // a state object compiled inside the 23000 ms frame
-        for (int i = 0; i < 120; i++) csv.Add($"{24100 + i:0.0},S,1,1,1.000,{i + 1000:x40},0.010,9,0");   // a load
-        for (int i = 0; i < 110; i++) csv.Add($"{25100 + i:0.0},S,1,1,150.000,{i + 3000:x40},0.010,9,0");   // a load in play that compiles
-        for (int i = 0; i < 150; i++) csv.Add($"{7100 + i * 0.5:0.0},S,1,1,1.000,{i + 2000:x40},0.010,9,0");   // a second startup burst
+        for (int i = 0; i < 120; i++) csv.Add(FormattableString.Invariant($"{24100 + i:0.0},S,1,1,1.000,{i + 1000:x40},0.010,9,0"));   // a load
+        for (int i = 0; i < 110; i++) csv.Add(FormattableString.Invariant($"{25100 + i:0.0},S,1,1,150.000,{i + 3000:x40},0.010,9,0"));   // a load in play that compiles
+        for (int i = 0; i < 150; i++) csv.Add(FormattableString.Invariant($"{7100 + i * 0.5:0.0},S,1,1,1.000,{i + 2000:x40},0.010,9,0"));   // a second startup burst
         // rows in time order here; out-of-order rows: Rows_slightly_out_of_order_stay_in_their_launch
         File.WriteAllLines(Path.Combine(_dir, "scskiller_creates.csv"),
             [csv[0], .. csv.Skip(1).OrderBy(r => double.Parse(r.Split(',')[0], System.Globalization.CultureInfo.InvariantCulture)), "#session,1000000000,Other.exe"]);
@@ -93,7 +93,7 @@ public class FrameLogTests(ITestOutputHelper output) : IDisposable
     public void A_burst_that_runs_to_the_last_create_is_startup_to_its_end()
     {
         var csv = new List<string> { "#session,1000000,Game.exe" };
-        for (int i = 0; i < 200; i++) csv.Add($"{10 * i:0.0},S,0,0,{(i % 2 == 0 ? "900.000" : "0.500")}");
+        for (int i = 0; i < 200; i++) csv.Add(FormattableString.Invariant($"{10 * i:0.0},S,0,0,{(i % 2 == 0 ? "900.000" : "0.500")}"));
         File.WriteAllLines(Path.Combine(_dir, "scskiller_creates.csv"), csv);
         var ends = Every10Ms(0, 1500).Append(1800).Concat(Every10Ms(1810, 20_000)).ToList();
         var bin = Path.Combine(_dir, FrameLog.FileName);
@@ -110,9 +110,9 @@ public class FrameLogTests(ITestOutputHelper output) : IDisposable
     public void A_trickle_of_cache_hits_in_play_ends_the_startup()
     {
         var csv = new List<string> { "#session,1000000,Game.exe" };
-        for (int i = 0; i < 200; i++) csv.Add($"{10 * i:0.0},S,0,0,{(i % 2 == 0 ? "900.000" : "0.500")}");
+        for (int i = 0; i < 200; i++) csv.Add(FormattableString.Invariant($"{10 * i:0.0},S,0,0,{(i % 2 == 0 ? "900.000" : "0.500")}"));
         for (int s = 2; s < 60; s++)
-            for (int j = 0; j < 30; j++) csv.Add($"{s * 1000 + j * 33:0.0},S,1,1,{(s == 59 && j == 21 ? "200.000" : "0.500")}");   // a compile ending at 59.7 s
+            for (int j = 0; j < 30; j++) csv.Add(FormattableString.Invariant($"{s * 1000 + j * 33:0.0},S,1,1,{(s == 59 && j == 21 ? "200.000" : "0.500")}"));   // a compile ending at 59.7 s
         csv.Add("#end,1080000");
         var path = Path.Combine(_dir, "scskiller_creates.csv");
         File.WriteAllLines(path, csv);
@@ -133,9 +133,9 @@ public class FrameLogTests(ITestOutputHelper output) : IDisposable
     public void A_warmed_precompile_of_cache_hits_is_the_startup()
     {
         var csv = new List<string> { "#session,1000000,Game.exe" };
-        for (int i = 0; i < 600; i++) csv.Add($"{i * 10 / 3.0:0.0},S,1,1,0.500");   // 300 a second for 2 s
+        for (int i = 0; i < 600; i++) csv.Add(FormattableString.Invariant($"{i * 10 / 3.0:0.0},S,1,1,0.500"));   // 300 a second for 2 s
         for (int s = 2; s < 20; s++)
-            for (int j = 0; j < 20; j++) csv.Add($"{s * 1000 + j * 50:0.0},S,1,1,0.500");
+            for (int j = 0; j < 20; j++) csv.Add(FormattableString.Invariant($"{s * 1000 + j * 50:0.0},S,1,1,0.500"));
         var path = Path.Combine(_dir, "scskiller_creates.csv");
         File.WriteAllLines(path, csv);
         var bin = Path.Combine(_dir, FrameLog.FileName);
@@ -149,7 +149,7 @@ public class FrameLogTests(ITestOutputHelper output) : IDisposable
     {
         var rows = Enumerable.Range(0, 600).Select(i => (T: i * 10 / 3.0, Row: "S,1,1,0.500")).Concat(rest).OrderBy(r => r.T);
         var path = Path.Combine(_dir, "scskiller_creates.csv");
-        File.WriteAllLines(path, ["#session,1000000,Game.exe", .. rows.Select(r => $"{r.T:0.0},{r.Row}")]);
+        File.WriteAllLines(path, ["#session,1000000,Game.exe", .. rows.Select(r => FormattableString.Invariant($"{r.T:0.0},{r.Row}"))]);
         return path;
     }
 
@@ -202,8 +202,8 @@ public class FrameLogTests(ITestOutputHelper output) : IDisposable
         Assert.Equal((5L, 0L), (l.Compiles, l.StartupCompiles));
 
         var csv = Path.Combine(_dir, "scskiller_creates.csv");
-        File.WriteAllLines(csv, ["#session,1000000,Game.exe", .. Enumerable.Range(0, 200).Select(i => $"{10 * i:0.0},S,0,0,{(i % 2 == 0 ? "900.000" : "0.500")}"),
-            .. PerSecond(2, 60, 30, "S,0,0,25.000").Select(c => $"{c.Item1:0.0},{c.Item2}"), "59990.0,S,0,0,200.000"]);
+        File.WriteAllLines(csv, ["#session,1000000,Game.exe", .. Enumerable.Range(0, 200).Select(i => FormattableString.Invariant($"{10 * i:0.0},S,0,0,{(i % 2 == 0 ? "900.000" : "0.500")}")),
+            .. PerSecond(2, 60, 30, "S,0,0,25.000").Select(c => FormattableString.Invariant($"{c.Item1:0.0},{c.Item2}")), "59990.0,S,0,0,200.000"]);
         l = SessionLog.Read(csv).Last!;
         Assert.Equal((0L, 1841L), (l.Compiles, l.StartupCompiles));
     }
@@ -238,7 +238,7 @@ public class FrameLogTests(ITestOutputHelper output) : IDisposable
     public void A_launch_that_ends_while_busy_is_all_startup()
     {
         var csv = Path.Combine(_dir, "scskiller_creates.csv");
-        File.WriteAllLines(csv, ["#session,2000,Game.exe", .. PerSecond(0, 60, 30, "S,0,0,25.000").Select(c => $"{c.Item1:0.0},{c.Item2}"),
+        File.WriteAllLines(csv, ["#session,2000,Game.exe", .. PerSecond(0, 60, 30, "S,0,0,25.000").Select(c => FormattableString.Invariant($"{c.Item1:0.0},{c.Item2}")),
             "60000.0,S,0,0,25.000", "60033.3,S,0,0,25.000", "#end,62050"]);
         var l = SessionLog.Read(csv).Last!;
         Assert.Equal((0L, 1802L), (l.Compiles, l.StartupCompiles));
@@ -262,7 +262,7 @@ public class FrameLogTests(ITestOutputHelper output) : IDisposable
     public void Rows_after_an_end_marker_are_a_launch_of_their_own_in_both_reports()
     {
         var csv = Path.Combine(_dir, "scskiller_creates.csv");
-        File.WriteAllLines(csv, ["#session,1000000,Game.exe", .. Enumerable.Range(0, 200).Select(i => $"{10 * i:0.0},S,0,0,{(i % 2 == 0 ? "900.000" : "0.500")}"),
+        File.WriteAllLines(csv, ["#session,1000000,Game.exe", .. Enumerable.Range(0, 200).Select(i => FormattableString.Invariant($"{10 * i:0.0},S,0,0,{(i % 2 == 0 ? "900.000" : "0.500")}")),
             "#end,1060000", "61000.0,S,0,0,200.000"]);
         var r = FrameLog.Read(FramesWithOneSlow(60_900, 300, 80_000), csv)!;
         Assert.Equal(TimeSpan.FromSeconds(2), r.Startup);
@@ -278,7 +278,7 @@ public class FrameLogTests(ITestOutputHelper output) : IDisposable
     public void Unix_stamps_go_onto_the_recorders_clock()
     {
         var csv = Path.Combine(_dir, "scskiller_creates.csv");
-        string[] rows = [.. PerSecond(20, 22, 30, "S,0,0,25.000").Select(c => $"{c.Item1:0.0},{c.Item2}"), "22000.0,S,0,0,25.000", "22033.0,S,0,0,25.000"];
+        string[] rows = [.. PerSecond(20, 22, 30, "S,0,0,25.000").Select(c => FormattableString.Invariant($"{c.Item1:0.0},{c.Item2}")), "22000.0,S,0,0,25.000", "22033.0,S,0,0,25.000"];
         File.WriteAllLines(csv, ["#session,1020000,Game.exe", "#clock,20000.0", .. rows, "#end,1026000,26000.0"]);
         Assert.Equal((1L, TimeSpan.FromSeconds(26)), (SessionLog.Read(csv).Last!.Compiles, SessionLog.Read(csv).Last!.Duration));
         File.WriteAllLines(csv, ["#session,1020000,Game.exe", "#clock,20000.0", .. rows, "#end,1026000"]);   // #end's stamp alone
@@ -294,8 +294,8 @@ public class FrameLogTests(ITestOutputHelper output) : IDisposable
     public void A_launch_never_borrows_another_launchs_frames()
     {
         var csv = Path.Combine(_dir, "scskiller_creates.csv");
-        File.WriteAllLines(csv, ["#session,1000000,Game.exe", "#clock,10.0", .. Every10Ms(10, 5000).Select(t => $"{t:0.0},S,1,1,0.500"), "#end,1005000,5000.0",
-            "#session,1006000,Game.exe", "#clock,10.0", .. Enumerable.Range(0, 600).Select(i => $"{10 + i * 10 / 3.0:0.0},S,1,1,0.500"),
+        File.WriteAllLines(csv, ["#session,1000000,Game.exe", "#clock,10.0", .. Every10Ms(10, 5000).Select(t => FormattableString.Invariant($"{t:0.0},S,1,1,0.500")), "#end,1005000,5000.0",
+            "#session,1006000,Game.exe", "#clock,10.0", .. Enumerable.Range(0, 600).Select(i => FormattableString.Invariant($"{10 + i * 10 / 3.0:0.0},S,1,1,0.500")),
             "2033.0,S,0,0,200.000", "#end,1008050,2050.0"]);
         var bin = Path.Combine(_dir, FrameLog.FileName);
         File.WriteAllBytes(bin, Launch(1_000_000, 10_000, Every10Ms(10, 5600)));   // the first launch's, past the second's 2-5 s window
